@@ -19,4 +19,3 @@ The security workflow includes the following security controls:
 * Secret Detection using `Gitleaks`
 * DAST using `ZAP`
 * SCA using OWASP `dependency-check`
-* Github MFA checker
