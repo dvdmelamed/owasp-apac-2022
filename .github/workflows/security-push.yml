@@ -1,0 +1,83 @@
+name: Security (push)
+
+on: [push]
+
+jobs:
+  Secrets:
+    runs-on: ubuntu-latest
+    name: Secret-Scanner
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  SCA:
+    runs-on: ubuntu-latest
+    name: Dependency-Checker
+    steps:
+      - uses: actions/checkout@v2
+      - name: Depcheck
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'test'
+          path: '.'
+          format: 'HTML'
+          args: >
+            --failOnCVSS 7
+            --enableRetired
+            --enableExperimental
+      - name: Upload Test results
+        uses: actions/upload-artifact@master
+        if: always()
+        with:
+          name: Depcheck report
+          path: ${{github.workspace}}/reports
+
+  DAST:
+    runs-on: ubuntu-latest
+    name: dynamic-analysis
+    services:
+      localstack:
+        image: localstack/localstack
+        ports:
+          - 4566:4566
+        env:
+          SERVICES: serverless
+          DEBUG: ""
+          DATA_DIR: ""
+          LAMBDA_EXECUTOR: ""
+          KINESIS_ERROR_PROBABILITY: ""
+          DOCKER_HOST: unix:///var/run/docker.sock
+          HOST_TMP_FOLDER: "/tmp"
+          HOSTNAME_EXTERNAL: localstack
+        options: >-
+          --name=localstack
+          --health-cmd="curl -sS 127.0.0.1:4566 || exit 1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3  
+    steps:
+      - name: localstack health
+        run: |
+          curl http://localhost:${{ job.services.localstack.ports[4566] }}/health
+      - uses: actions/checkout@v2
+      - name: Setup Node.js 14.x
+        uses: actions/setup-node@v1
+        with:
+          node-version: 14.x
+      - name: install serverless
+        run: sudo npm install -g serverless@2.29.0 && npm install
+      - name: Deploy to localstack
+        run: sls deploy --stage local
+      - name: Get deployment URL
+        run: | 
+          URL=$(sls info --stage local | grep restapis)/ping
+          echo "target_url=$URL" >> $GITHUB_ENV
+      - name: ZAP Scan
+        uses: zaproxy/action-full-scan@v0.2.0
+        with:
+          target: "${{ env.target_url }}"
+          fail_action: true
